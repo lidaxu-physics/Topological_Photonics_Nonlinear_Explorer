@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="original.png" alt="Topological Photonic Lattice" width="700">
+</p>
+
 # Topological Photonic Lattice Explorer
 
 **Author:** Lida Xu  
