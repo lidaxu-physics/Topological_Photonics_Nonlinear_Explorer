@@ -67,8 +67,8 @@ except Exception:
     # Covers ImportError, any XLA initialisation error, and jit compile failures.
     JAX_AVAILABLE = False
     jnp = np          # fallback: jnp aliases numpy so non-jit code still runs
-if getattr(sys, 'frozen', False):
-    JAX_AVAILABLE = False
+#if getattr(sys, 'frozen', False):
+#    JAX_AVAILABLE = False
 # =====================================================================
 # LATTICE GEOMETRY  (mirrored from Linear.py for visualization)
 # =====================================================================
@@ -1168,17 +1168,21 @@ class SlowTimeWindow(QMainWindow):
             hist = np.empty((NL, NF, n_snap), dtype=np.complex128)
             t0   = time.time()
             snap = 0
-            for i in range(niter):
-                if self._stop.is_set():
-                    _q.put(('stopped', hist[:, :, :snap], snap)); return
-                a_T = stepper1(a_T, props_j, fc_j, p['TStep'])
-                if (i + 1) % every == 0:
-                    hist[:, :, snap] = np.array(a_T)
-                    snap += 1
-                if i % max(1, niter // 200) == 0:   # progress ~200 updates
-                    elapsed = time.time() - t0
-                    _q.put(('progress', i + 1, niter, snap, elapsed))
-            _q.put(('done', hist, snap))
+            try:
+                for i in range(niter):
+                    if self._stop.is_set():
+                        _q.put(('stopped', hist[:, :, :snap], snap)); return
+                    a_T = stepper1(a_T, props_j, fc_j, p['TStep'])
+                    if (i + 1) % every == 0:
+                        hist[:, :, snap] = np.array(a_T)
+                        snap += 1
+                    if i % max(1, niter // 200) == 0:
+                        elapsed = time.time() - t0
+                        _q.put(('progress', i + 1, niter, snap, elapsed))
+                _q.put(('done', hist, snap))
+            except Exception as exc:
+                import traceback; traceback.print_exc()
+                _q.put(('stopped', hist[:, :, :snap], snap))
 
         threading.Thread(target=worker, daemon=True).start()
         self._poll_timer.start()

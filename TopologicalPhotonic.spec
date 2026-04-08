@@ -4,14 +4,18 @@
 
 block_cipher = None
 
+import glob, os
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
+# Bundle ALL MKL + OpenMP DLLs so the exe works outside Anaconda Prompt
+_mkl_dir = r'C:\Users\22842\anaconda3\Library\bin'
+_mkl_dlls = [(f, '.') for f in glob.glob(os.path.join(_mkl_dir, 'mkl*.dll'))]
+_mkl_dlls.append((os.path.join(_mkl_dir, 'libiomp5md.dll'), '.'))
 
 a = Analysis(
     ['Linear.py'],
     pathex=['.'],
-    binaries=[
-        (r'C:\Users\22842\anaconda3\Library\bin\mkl_intel_thread.2.dll', '.'),
-    ] + collect_dynamic_libs('jaxlib'),
+    binaries=_mkl_dlls + collect_dynamic_libs('jaxlib'),
     datas=[
         ('NonLinear.py', '.'),
         ('Linear.py',    '.'),
@@ -97,7 +101,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,            # keep True until confirmed working, then flip to False
+    console=False,            # flip to False once confirmed working
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
