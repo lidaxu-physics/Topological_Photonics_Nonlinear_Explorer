@@ -17,6 +17,14 @@ Changes v1.0:
 """
 
 import sys, os, io, zipfile, datetime
+
+# PyInstaller onefile: bundled data files live in sys._MEIPASS temp dir
+if getattr(sys, 'frozen', False):
+    _BUNDLE_DIR = sys._MEIPASS
+    sys.path.insert(0, _BUNDLE_DIR)   # so "from NonLinear import ..." works
+else:
+    _BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,11 +35,12 @@ from PyQt5.QtWidgets import (
     QGroupBox, QSizePolicy, QSplitter, QStatusBar, QFrame,
     QFileDialog, QLineEdit, QMessageBox,
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui  import QFont, QColor, QPalette, QIcon
+from PyQt5.QtCore import Qt, QTimer, QRect
+from PyQt5.QtGui  import QFont, QColor, QPalette, QIcon, QPixmap
 
 import matplotlib
-matplotlib.use('Qt5Agg')
+if matplotlib.get_backend() != 'Qt5Agg':
+    matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -557,7 +566,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle('Lida Xu\'s Topological Photonic Lattice Explorer — v1.0')
         self.setMinimumSize(1200, 750)
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
+        icon_path = os.path.join(_BUNDLE_DIR, 'icon.ico')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         self._apply_dark_theme()
@@ -798,7 +807,9 @@ class MainWindow(QMainWindow):
             'QPushButton:disabled{color:#2a3050;}')
 
         self.lbl_save_path  = QLabel('Save to:')
-        self.edit_save_path = QLineEdit(os.path.dirname(os.path.abspath(__file__)))
+        self.edit_save_path = QLineEdit(
+            os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+            else os.path.dirname(os.path.abspath(__file__)))
         self.edit_save_path.setStyleSheet(
             'background:#171c2e;border:1px solid #1e2230;border-radius:4px;'
             'padding:3px 6px;color:#c8d0e7;font-size:11px;')
@@ -1586,7 +1597,20 @@ class MainWindow(QMainWindow):
                 f"_I_{s['isite']}_O_{s['osite']}")
 
     def _save(self):
-        base   = self.edit_save_path.text().strip() or os.path.dirname(os.path.abspath(__file__))
+        try:
+            self._save_inner()
+        except Exception as e:
+            import traceback
+            err = traceback.format_exc()
+            QMessageBox.critical(self, 'Save Error',
+                f'Save failed at step:\n\n{str(e)}\n\nDetails:\n{err}')
+            self.status.showMessage(f'❌ Save failed: {e}')
+            self.btn_save.setEnabled(True)
+
+    def _save_inner(self):
+        base   = self.edit_save_path.text().strip() or (
+            os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+            else os.path.dirname(os.path.abspath(__file__)))
         name   = self._make_session_name()
         folder = os.path.join(base, name)
         os.makedirs(folder, exist_ok=True)
@@ -1595,24 +1619,7 @@ class MainWindow(QMainWindow):
         self.status.showMessage('💾 Saving...')
         s = self.state
 
-        # ── Figures: spectra, lattice, photon flow ────────────────────────────
-        sp = s.get('spectrum')
-        pb_label = ''
-        if sp is not None:
-            pb_val = sp['DWP'][s['probe_idx']] / J0
-            pb_label = f"_pb_{f'{pb_val:.4g}'.replace('.', 'p')}"
-
-        for fig_, fname in [(self.fig_spec,  'spectra'),
-                            (self.fig_lat,   'lattice'),
-                            (self.fig_flow,  'flow')]:
-            for fmt in ('png', 'svg'):
-                buf = io.BytesIO()
-                fig_.savefig(buf, format=fmt, dpi=200, bbox_inches='tight',
-                             facecolor=fig_.get_facecolor())
-                with open(os.path.join(folder, f'{fname}{pb_label}.{fmt}'), 'wb') as fh:
-                    fh.write(buf.getvalue())
-
-        # ── params.npz ────────────────────────────────────────────────────────
+        # ── params.npz — save this first (most important) ─────────────────────
         params = dict(
             hamiltonian  = np.array([s['h_str']]),
             nx0          = np.array([s['nx0']]),
@@ -1637,13 +1644,32 @@ class MainWindow(QMainWindow):
             defects      = np.array(sorted(s['defects']), dtype=int),
         )
         sp = s.get('spectrum')
+        pb_label = ''
         if sp is not None:
+            pb_val = sp['DWP'][s['probe_idx']] / J0
+            pb_label = f"_pb_{f'{pb_val:.4g}'.replace('.', 'p')}"
             params.update(DWP=sp['DWP'], thru=sp['thru'],
                           drop=sp['drop'], delay=sp['delay'], power=sp['power'])
         if s.get('complex_field') is not None:
             params['complex_field_re'] = s['complex_field'].real
             params['complex_field_im'] = s['complex_field'].imag
         np.savez(os.path.join(folder, 'linear_params.npz'), **params)
+        self.status.showMessage('💾 Saving figures...')
+
+        # ── Figures: spectra, lattice, photon flow ────────────────────────────
+        for fig_, fname in [(self.fig_spec,  'spectra'),
+                            (self.fig_lat,   'lattice'),
+                            (self.fig_flow,  'flow')]:
+            for fmt in ('png', 'svg'):
+                try:
+                    buf = io.BytesIO()
+                    fig_.savefig(buf, format=fmt, dpi=200, bbox_inches='tight',
+                                 facecolor=fig_.get_facecolor())
+                    with open(os.path.join(folder, f'{fname}{pb_label}.{fmt}'), 'wb') as fh:
+                        fh.write(buf.getvalue())
+                except Exception as fig_err:
+                    # Log figure save failure but don't abort — data is already saved
+                    self.status.showMessage(f'⚠️ Could not save {fname}.{fmt}: {fig_err}')
 
         # Remember so Feed to Nonlinear can use the same folder
         self._session_folder = folder
@@ -1655,14 +1681,29 @@ class MainWindow(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setFont(QFont('Segoe UI', 9))
-    win = MainWindow(); win.show()
 
-    # ── Close PyInstaller splash screen once the main window is ready ──────────
+    # ── Update PyInstaller built-in splash text during startup ───────────────
+    # pyi_splash is injected by the bootloader when built with PyInstaller.
+    # Calls are no-ops (ImportError caught) when running directly as .py.
+    def _splash(msg):
+        try:
+            import pyi_splash
+            pyi_splash.update_text(msg)
+        except ImportError:
+            pass
+
+    _splash('Initialising…')
+
+    win = MainWindow()
+
+    _splash('Building interface…')
+    win.show()
+
+    # ── Close the built-in splash once the main window is ready ──────────────
     try:
-        import pyi_splash          # only exists inside a PyInstaller bundle
-        pyi_splash.update_text('Almost ready…')
+        import pyi_splash
         pyi_splash.close()
     except ImportError:
-        pass                       # running as plain .py — no splash, no problem
+        pass
 
     sys.exit(app.exec_())

@@ -11,15 +11,17 @@ Usage (inside Linear.py):
     self._nl_win.show()
 """
 
-import os, io, zipfile, datetime, queue, threading
+import os, io, sys, zipfile, datetime, queue, threading
 import numpy as np
 import scipy.linalg
 
 # Import lattice Hamiltonian builder from Linear.py (same directory)
 try:
     import importlib.util as _ilu, sys as _sys
+    _base = (sys._MEIPASS if getattr(sys, 'frozen', False)
+             else os.path.dirname(os.path.abspath(__file__)))
     _spec = _ilu.spec_from_file_location(
-        'Linear', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Linear.py'))
+        'Linear', os.path.join(_base, 'Linear.py'))
     _lin = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_lin)
     build_hamiltonian = _lin.build_hamiltonian
 except Exception:
@@ -36,7 +38,8 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui  import QFont
 
 import matplotlib
-matplotlib.use('Qt5Agg')          # must be set before any pyplot import
+if matplotlib.get_backend() != 'Qt5Agg':
+    matplotlib.use('Qt5Agg')      # must be set before any pyplot import; guard against double-set
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -44,13 +47,28 @@ import matplotlib.patches as mpatches
 from matplotlib import cm
 from matplotlib.collections import LineCollection
 
-import jax
-import jax.numpy as jnp
-from jax import jit
-from functools import partial
-
-jax.config.update("jax_enable_x64", True)
-
+try:
+    import jax
+    import jax.numpy as jnp
+    from jax import jit
+    from functools import partial
+    jax.config.update("jax_enable_x64", True)
+    # Runtime test: verify XLA can actually JIT-compile and execute — not just import.
+    # In a PyInstaller exe, 'import jax' succeeds even when XLA data files (MLIR
+    # dialects, kernel libraries) are missing from the bundle.  The crash happens
+    # silently the first time jit() tries to lower a function.  Running a trivial
+    # jit here at startup catches that failure as a Python exception so we can fall
+    # back to NumPy instead of segfaulting mid-simulation when Run is clicked.
+    _jax_probe = jit(lambda x: x + 1.0)
+    _jax_probe(jnp.array(1.0, dtype=jnp.float64))
+    del _jax_probe
+    JAX_AVAILABLE = True
+except Exception:
+    # Covers ImportError, any XLA initialisation error, and jit compile failures.
+    JAX_AVAILABLE = False
+    jnp = np          # fallback: jnp aliases numpy so non-jit code still runs
+if getattr(sys, 'frozen', False):
+    JAX_AVAILABLE = False
 # =====================================================================
 # LATTICE GEOMETRY  (mirrored from Linear.py for visualization)
 # =====================================================================
@@ -221,8 +239,11 @@ def build_propagators(H, DispMat, LM, detuning, dt, F, PumpFSR, ISite):
     return props, fc, cache
 
 
-def build_propagators_fast(H, DispMat, LM, detuning, dt, F, PumpFSR, ISite,
-                           _eig_cache={}):
+# Module-level cache for build_propagators_fast eigendecomposition results.
+# Keyed by (H_bytes, shape) so identity is based on content, not object id().
+_BPF_EIG_CACHE: dict = {}
+
+def build_propagators_fast(H, DispMat, LM, detuning, dt, F, PumpFSR, ISite):
     """Fast propagator build using eigendecomposition of H_aug.
 
     Replaces 257 expm calls with 1 eig + 257 vector-exp + 257 matrix multiplies.
@@ -240,15 +261,17 @@ def build_propagators_fast(H, DispMat, LM, detuning, dt, F, PumpFSR, ISite,
     H_aug = H - 1j * np.diag(kex_per_site)       # absorb into H_aug
     kin   = LM[:, 0].min().real                   # uniform loss floor
 
-    # Eigendecompose H_aug (non-Hermitian in general)
-    H_key = id(H_aug)
-    if H_key not in _eig_cache or not np.allclose(_eig_cache[H_key][0], H_aug):
+    # Eigendecompose H_aug (non-Hermitian in general).
+    # Cache keyed by tobytes() + shape — stable content-based identity,
+    # avoids the id()-reuse footgun of the old mutable default arg approach.
+    H_key = (H_aug.tobytes(), H_aug.shape)
+    if H_key not in _BPF_EIG_CACHE:
         lam, V = scipy.linalg.eig(H_aug)
         Vd = np.linalg.inv(V)
-        _eig_cache.clear()
-        _eig_cache[H_key] = (H_aug.copy(), lam, V, Vd)
-    else:
-        _, lam, V, Vd = _eig_cache[H_key]
+        if len(_BPF_EIG_CACHE) > 8:   # bound memory: keep at most 8 entries
+            _BPF_EIG_CACHE.pop(next(iter(_BPF_EIG_CACHE)))
+        _BPF_EIG_CACHE[H_key] = (lam, V, Vd)
+    lam, V, Vd = _BPF_EIG_CACHE[H_key]
 
     # Uniform diagonal scalar per mode: c_μ = i·Δ - i·D2·μ²/2 - kin
     # DispMat[m, mu] = D2/2 · FSRVec[mu]^2 (same for all m)
@@ -280,7 +303,8 @@ def build_propagators_fast(H, DispMat, LM, detuning, dt, F, PumpFSR, ISite,
     return props, fc, cache
 
 
-
+def update_fc_fast(cache, F, PumpFSR, ISite, NumFSRs, NLattice):
+    """Cheapest update: only the pump forcing vector changed (F changed, H and M unchanged)."""
     fc   = np.zeros((NumFSRs, NLattice), dtype=np.complex128)
     MidP = cache.get('MidP_pump')
     if MidP is not None:
@@ -292,18 +316,31 @@ def build_propagators_fast(H, DispMat, LM, detuning, dt, F, PumpFSR, ISite,
 _stepper_cache: dict = {}
 
 def get_stepper(NIter: int):
+    """Return a compiled JAX stepper if JAX is available, else a plain NumPy loop."""
     if NIter not in _stepper_cache:
-        @partial(jit)
-        def _run(a_T, props, fc, dt):
-            def step(a_T, _):
-                a_T = jnp.exp(1j*(dt*0.5)*jnp.abs(a_T)**2) * a_T
-                a_W = jnp.fft.fft(a_T, axis=1, norm='ortho')
-                a_W = jnp.einsum('mij,jm->im', props, a_W) + fc.T
-                a_T = jnp.fft.ifft(a_W, axis=1, norm='ortho')
-                a_T = jnp.exp(1j*(dt*0.5)*jnp.abs(a_T)**2) * a_T
-                return a_T, None
-            a_final, _ = jax.lax.scan(step, a_T, None, length=NIter)
-            return a_final
+        if JAX_AVAILABLE:
+            @partial(jit)
+            def _run(a_T, props, fc, dt):
+                def step(a_T, _):
+                    a_T = jnp.exp(1j*(dt*0.5)*jnp.abs(a_T)**2) * a_T
+                    a_W = jnp.fft.fft(a_T, axis=1, norm='ortho')
+                    a_W = jnp.einsum('mij,jm->im', props, a_W) + fc.T
+                    a_T = jnp.fft.ifft(a_W, axis=1, norm='ortho')
+                    a_T = jnp.exp(1j*(dt*0.5)*jnp.abs(a_T)**2) * a_T
+                    return a_T, None
+                a_final, _ = jax.lax.scan(step, a_T, None, length=NIter)
+                return a_final
+        else:
+            def _run(a_T, props, fc, dt):
+                """Pure-NumPy fallback stepper (no JIT compilation)."""
+                a_T = np.array(a_T, dtype=complex)
+                for _ in range(NIter):
+                    a_T = np.exp(1j*(dt*0.5)*np.abs(a_T)**2) * a_T
+                    a_W = np.fft.fft(a_T, axis=1, norm='ortho')
+                    a_W = np.einsum('mij,jm->im', np.array(props), a_W) + np.array(fc).T
+                    a_T = np.fft.ifft(a_W, axis=1, norm='ortho')
+                    a_T = np.exp(1j*(dt*0.5)*np.abs(a_T)**2) * a_T
+                return a_T
         _stepper_cache[NIter] = _run
     return _stepper_cache[NIter]
 
@@ -311,7 +348,8 @@ def get_stepper(NIter: int):
 def make_initial_state(NLattice, NumFSRs, seed=42):
     rng = np.random.default_rng(seed)
     a_W = 1e-8*rng.random((NLattice,NumFSRs))*np.exp(1j*rng.random((NLattice,NumFSRs))*2*np.pi)
-    return jnp.array(np.fft.ifft(a_W, axis=1, norm='ortho'))
+    state = np.fft.ifft(a_W, axis=1, norm='ortho')
+    return jnp.array(state) if JAX_AVAILABLE else state
 
 
 _H_KEYS = {'psi'}
@@ -1563,7 +1601,7 @@ class LyapunovWindow(QMainWindow):
     def _save(self):
         folder = self._p.get('session_folder')
         if not folder:
-            folder = os.path.dirname(os.path.abspath(__file__))
+            folder = os.path.join(os.path.expanduser('~'), 'Documents')
         os.makedirs(folder, exist_ok=True)
 
         lam_final = self._running_data[-1] if hasattr(self, '_running_data') and self._running_data else None
@@ -2154,7 +2192,7 @@ class _SlowTimeWindowMethods:
             _update_supermode(val)
 
         def _save():
-            folder = p.get('session_folder') or os.path.dirname(os.path.abspath(__file__))
+            folder = p.get('session_folder') or os.path.join(os.path.expanduser('~'), 'Documents')
             os.makedirs(folder, exist_ok=True)
             for fmt, dpi in [('png', 200), ('svg', 150)]:
                 buf = io.BytesIO()
@@ -2174,8 +2212,12 @@ class _SlowTimeWindowMethods:
         sld_step.valueChanged.connect(_on_step_changed)
         spn_mode.valueChanged.connect(_on_mode_changed)
         sld_mode.valueChanged.connect(_on_mode_changed)
-        btn_start.clicked.connect(lambda: threading.Thread(
-            target=_run_analysis, daemon=True).start())
+        # Run on the main thread — _run_analysis calls QApplication.processEvents()
+        # at several points, keeping the UI (including Stop) responsive.
+        # A background thread is unsafe here because _run_analysis directly manipulates
+        # Qt widgets (setEnabled, setText, canvas.draw) which must only happen on the
+        # main thread; doing so from a worker thread causes intermittent crashes.
+        btn_start.clicked.connect(_run_analysis)
         btn_stop.clicked.connect(lambda: win._stop_flag.set())
         btn_save.clicked.connect(_save)
 
@@ -2304,7 +2346,7 @@ class _SlowTimeWindowMethods:
             vmax = float(Z.max())
             vmin = vmax - 60 if cmap == 'hot' else 0.
             Zn   = Z if cmap == 'hot' else Z / (Z.max() or 1.)
-            dx   = xv[1]-xv[0] if len(xv) > 1 else every
+            dx   = (xv[1]-xv[0]) if len(xv) > 1 else max(every, 1)
             dy   = yv[1]-yv[0] if len(yv) > 1 else 1.
             xe   = np.append(xv, xv[-1]+dx)
             ye   = np.append(yv, yv[-1]+dy)
@@ -2331,7 +2373,11 @@ class _SlowTimeWindowMethods:
             return mesh
 
         def _add_cbar(ax, mesh):
-            """Add a slim inset colorbar with only min and max ticks."""
+            """Add a slim inset colorbar with only min and max ticks.
+            Remove any previously added inset axes first to avoid pileup on re-run."""
+            # Remove old inset axes parented to this ax (ax.cla() does not remove them)
+            for child in list(ax.child_axes if hasattr(ax, 'child_axes') else []):
+                child.remove()
             cax = _inset_axes(ax, width='4%', height='90%',
                               loc='center right',
                               bbox_to_anchor=(0, 0, 1.06, 1),
@@ -2385,7 +2431,7 @@ class _SlowTimeWindowMethods:
 
         self.ax_osc.cla(); self.ax_osc.set_facecolor(PANEL_BG)
         self.ax_osc.plot(x_iters, pulse, color='#c8d0e7', lw=1.0)
-        self.ax_osc.set_xlim([0, x_iters[-1]]); self.ax_osc.set_ylim([0, 1.1])
+        self.ax_osc.set_xlim([0, max(x_iters[-1], 1)]); self.ax_osc.set_ylim([0, 1.1])
         self.ax_osc.set_xlabel('Iteration', color=TEXT_DIM, fontsize=7)
         self.ax_osc.set_ylabel('Norm. power', color=TEXT_DIM, fontsize=7)
         self.ax_osc.set_title(f'Total |a_W|² vs slow time  (osite)', color='#c8d0e7', fontsize=8, pad=2)
@@ -2397,6 +2443,10 @@ class _SlowTimeWindowMethods:
         # ── Block 3: 2D heatmap + y-cuts ─────────────────────────────
         _progress(3, '2D slow-time spectrum')
         if not self._plotting: return
+        # Reset colorbar ref so _draw_hmap_and_ycuts recreates the inset axes fresh.
+        # ax_hmap.cla() (called inside) destroys the old inset axes, leaving _cbar
+        # pointing at a dead Axes — update_normal() on it crashes on second run.
+        self._cbar = None; self.ax_cbar = None
         self._draw_hmap_and_ycuts()
 
         # ── Block 4: 4 heatmaps (slowest) ────────────────────────────
@@ -2884,7 +2934,7 @@ class _SlowTimeWindowMethods:
             self.lbl_vis_status.setText('No frames in range.'); return
 
         # Save into session folder (same as the other files)
-        folder = self._p.get('session_folder') or os.path.dirname(os.path.abspath(__file__))
+        folder = self._p.get('session_folder') or os.path.join(os.path.expanduser('~'), 'Documents')
         os.makedirs(folder, exist_ok=True)
         mu    = self.spn_mode_idx.value()
         fname = f'movie_s{s_start}_e{s_end}_step{s_step}_mu{mu}.{fmt}'
@@ -3272,7 +3322,8 @@ class NonlinearWindow(QMainWindow):
         root.addWidget(self._build_controls())
         self.status = QStatusBar();  self.setStatusBar(self.status)
         self.status.showMessage(
-            f'Ready  |  H_mat inherited  |  JAX {jax.__version__} on {jax.default_backend()}')
+            f'Ready  |  H_mat inherited  |  ' +
+            (f'JAX {jax.__version__} on {jax.default_backend()}' if JAX_AVAILABLE else 'JAX not installed — NumPy fallback active'))
 
     # ------------------------------------------------------------------
     def _build_controls(self):
@@ -4115,7 +4166,7 @@ class NonlinearWindow(QMainWindow):
         if getattr(self, '_nl_session_folder', None):
             return self._nl_session_folder
 
-        base  = self._ls.get('session_folder') or os.path.dirname(os.path.abspath(__file__))
+        base  = self._ls.get('session_folder') or os.path.join(os.path.expanduser('~'), 'Documents')
         _flt  = lambda v: f'{v:.4g}'.replace('.', 'p')
 
         n_planned = self.spn_nsteps.value()
