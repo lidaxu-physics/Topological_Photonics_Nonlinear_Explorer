@@ -3451,7 +3451,7 @@ class NonlinearWindow(QMainWindow):
 
         # Always-present external rows
         self._add_param_row('Pump F',     'F',        0.15,  0.3,  10.0, removable=False)
-        self._add_param_row('Detuning D', 'detuning', 1.455, 1.455, 1.4, removable=False,
+        self._add_param_row('Detuning δ', 'detuning', 1.455, 1.455, 1.4, removable=False,
                             default_mode='Sweep')
         if self._is_cyl:
             self._add_param_row('Ext. flux Psi  (×π)', 'psi', 0.0, 0.0, 1.0, removable=False)
@@ -3636,10 +3636,10 @@ class NonlinearWindow(QMainWindow):
             ax.grid(True, color=GRID_COL, lw=0.4)
             ax.set_xlabel('Step', color=TEXT_DIM, fontsize=8)
 
-        # ── Subplot 0: Pump F (left) + Detuning D (right) twin axis ──
+        # ── Subplot 0: Pump F (left) + Detuning δ (right) twin axis ──
         ax_f = self.fig_sched.add_subplot(gs[0])
         ax_d = ax_f.twinx()
-        _style(ax_f, 'Pump F  &  Detuning D', TEXT_COL)
+        _style(ax_f, 'Pump F  &  Detuning δ', TEXT_COL)
 
         if f_rows:
             yf = f_rows[0].get_array(n)
@@ -4198,7 +4198,7 @@ class NonlinearWindow(QMainWindow):
                 return f"{prefix}{_flt(float(arr.min()))}to{_flt(float(arr.max()))}"
 
         f_str   = _param_str('F',        'F')
-        d_str   = _param_str('detuning', 'D')
+        d_str   = _param_str('detuning', 'δ')
         psi_str = _param_str('psi',      'psi')
         extras  = '_'.join(s for s in [f_str, d_str, psi_str] if s)
 

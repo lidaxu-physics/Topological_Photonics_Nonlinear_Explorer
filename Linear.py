@@ -759,16 +759,24 @@ class MainWindow(QMainWindow):
         dl.addWidget(self.btn_rebuild, 2, 3, 1, 2)
         self.sl_widgets = [self.spn_nx1, self.spn_ny1, self.spn_j1]
 
-        # row 3-4: κ sliders (moved here from Simulation)
+        # row 3-4: κ sliders + spinboxes (moved here from Simulation)
         self.sld_kin = QSlider(Qt.Horizontal); self.sld_kin.setRange(1,  50); self.sld_kin.setValue(1)
         self.sld_kex = QSlider(Qt.Horizontal); self.sld_kex.setRange(10, 200); self.sld_kex.setValue(10)
-        self.lbl_kin = QLabel('κ_in=0.001'); self.lbl_kex = QLabel('κ_ex=0.010')
-        self.sld_kin.valueChanged.connect(lambda v: self.lbl_kin.setText(f'κ_in={v/1000:.3f}'))
-        self.sld_kex.valueChanged.connect(lambda v: self.lbl_kex.setText(f'κ_ex={v/1000:.3f}'))
+        self.lbl_kin = QLabel('κ_in'); self.lbl_kex = QLabel('κ_ex')
+        self.spn_kin_val = QDoubleSpinBox(); self.spn_kin_val.setRange(0.001, 0.050)
+        self.spn_kin_val.setDecimals(3); self.spn_kin_val.setSingleStep(0.001); self.spn_kin_val.setValue(0.001)
+        self.spn_kex_val = QDoubleSpinBox(); self.spn_kex_val.setRange(0.010, 0.200)
+        self.spn_kex_val.setDecimals(3); self.spn_kex_val.setSingleStep(0.001); self.spn_kex_val.setValue(0.010)
+        # Bidirectional sync: slider → spinbox
+        self.sld_kin.valueChanged.connect(lambda v: self.spn_kin_val.setValue(v / 1000.))
+        self.sld_kex.valueChanged.connect(lambda v: self.spn_kex_val.setValue(v / 1000.))
+        # Bidirectional sync: spinbox → slider
+        self.spn_kin_val.valueChanged.connect(lambda v: self.sld_kin.setValue(int(round(v * 1000))))
+        self.spn_kex_val.valueChanged.connect(lambda v: self.sld_kex.setValue(int(round(v * 1000))))
         self.sld_kin.valueChanged.connect(lambda _: self._invalidate())
         self.sld_kex.valueChanged.connect(lambda _: self._invalidate())
-        dl.addWidget(self.lbl_kin, 3, 0); dl.addWidget(self.sld_kin, 3, 1, 1, 4)
-        dl.addWidget(self.lbl_kex, 4, 0); dl.addWidget(self.sld_kex, 4, 1, 1, 4)
+        dl.addWidget(self.lbl_kin, 3, 0); dl.addWidget(self.sld_kin, 3, 1, 1, 3); dl.addWidget(self.spn_kin_val, 3, 4)
+        dl.addWidget(self.lbl_kex, 4, 0); dl.addWidget(self.sld_kex, 4, 1, 1, 3); dl.addWidget(self.spn_kex_val, 4, 4)
 
         row.addWidget(gd)
 
@@ -776,24 +784,30 @@ class MainWindow(QMainWindow):
         gr  = QGroupBox('Simulation')
         rl  = QGridLayout(gr); rl.setSpacing(3)
 
-        # φ sliders — 0…200 ticks → 0…2π
+        # φ sliders — 0…200 ticks → 0…2π, with spinboxes in units of π
         PHI_TICKS = 200
         def _make_phi_sld(default_ticks, lbl_text, cb):
             sld = QSlider(Qt.Horizontal)
             sld.setRange(0, PHI_TICKS); sld.setValue(default_ticks)
             lbl = QLabel(lbl_text)
+            spn = QDoubleSpinBox()
+            spn.setRange(0.0, 2.0); spn.setDecimals(4); spn.setSingleStep(0.01)
+            spn.setSuffix(' π'); spn.setValue(default_ticks / 100.0)
+            # Bidirectional sync
+            sld.valueChanged.connect(lambda v, s=spn: s.setValue(v / 100.0))
+            spn.valueChanged.connect(lambda v, s=sld: s.setValue(int(round(v * 100))))
             sld.valueChanged.connect(cb)
-            return sld, lbl
+            return sld, lbl, spn
 
-        self.sld_phi_iqh0, self.lbl_phi_iqh0 = _make_phi_sld(50,  'φ_IQH_layer_0 = π/2', self._on_phi_iqh0_change)
-        self.sld_phi_iqh1, self.lbl_phi_iqh1 = _make_phi_sld(50,  'φ_IQH_layer_1 = π/2', self._on_phi_iqh1_change)
-        self.sld_phi_aqh0, self.lbl_phi_aqh0 = _make_phi_sld(25,  'φ_AQH_layer_0 = π/4', self._on_phi_aqh0_change)
-        self.sld_phi_aqh1, self.lbl_phi_aqh1 = _make_phi_sld(25,  'φ_AQH_layer_1 = π/4', self._on_phi_aqh1_change)
+        self.sld_phi_iqh0, self.lbl_phi_iqh0, self.spn_phi_iqh0 = _make_phi_sld(50,  'φ_IQH_layer_0', self._on_phi_iqh0_change)
+        self.sld_phi_iqh1, self.lbl_phi_iqh1, self.spn_phi_iqh1 = _make_phi_sld(50,  'φ_IQH_layer_1', self._on_phi_iqh1_change)
+        self.sld_phi_aqh0, self.lbl_phi_aqh0, self.spn_phi_aqh0 = _make_phi_sld(25,  'φ_AQH_layer_0', self._on_phi_aqh0_change)
+        self.sld_phi_aqh1, self.lbl_phi_aqh1, self.spn_phi_aqh1 = _make_phi_sld(25,  'φ_AQH_layer_1', self._on_phi_aqh1_change)
 
         # Sweep spinboxes
-        self.spn_ss = QDoubleSpinBox(); self.spn_ss.setRange(-20, 20); self.spn_ss.setValue(1.455); self.spn_ss.setSingleStep(0.5)
-        self.spn_se = QDoubleSpinBox(); self.spn_se.setRange(-20, 20); self.spn_se.setValue(1.4);   self.spn_se.setSingleStep(0.5)
-        self.spn_st = QDoubleSpinBox(); self.spn_st.setRange(0.0001, 1.0); self.spn_st.setValue(0.0001); self.spn_st.setSingleStep(0.0001); self.spn_st.setDecimals(4)
+        self.spn_ss = QDoubleSpinBox(); self.spn_ss.setRange(-20, 20); self.spn_ss.setDecimals(6); self.spn_ss.setValue(1.455); self.spn_ss.setSingleStep(0.001)
+        self.spn_se = QDoubleSpinBox(); self.spn_se.setRange(-20, 20); self.spn_se.setDecimals(6); self.spn_se.setValue(1.4);   self.spn_se.setSingleStep(0.001)
+        self.spn_st = QDoubleSpinBox(); self.spn_st.setRange(0.0001, 1.0); self.spn_st.setValue(0.0001); self.spn_st.setSingleStep(0.0001); self.spn_st.setDecimals(6)
         for _spn in (self.spn_ss, self.spn_se, self.spn_st,
                      self.spn_nx0, self.spn_ny0, self.spn_nx1, self.spn_ny1, self.spn_j1):
             _spn.valueChanged.connect(lambda _: self._invalidate())
@@ -829,20 +843,26 @@ class MainWindow(QMainWindow):
             'QPushButton:disabled{color:#2a3050;}')
         self.btn_feed.clicked.connect(self._open_nonlinear)
 
-        # ψ (external flux) slider — only active for cylinder types
+        # ψ (external flux) slider + spinbox — only active for cylinder types
         self.sld_psi = QSlider(Qt.Horizontal)
         self.sld_psi.setRange(0, 200); self.sld_psi.setValue(0)   # 0…2π
-        self.lbl_psi = QLabel('ψ_ext = 0')
-        self.sld_psi.setVisible(False); self.lbl_psi.setVisible(False)
+        self.lbl_psi = QLabel('ψ_ext')
+        self.spn_psi_val = QDoubleSpinBox()
+        self.spn_psi_val.setRange(0.0, 2.0); self.spn_psi_val.setDecimals(4)
+        self.spn_psi_val.setSingleStep(0.01); self.spn_psi_val.setSuffix(' π'); self.spn_psi_val.setValue(0.0)
+        self.sld_psi.setVisible(False); self.lbl_psi.setVisible(False); self.spn_psi_val.setVisible(False)
+        # Bidirectional sync
+        self.sld_psi.valueChanged.connect(lambda v: self.spn_psi_val.setValue(v / 100.0))
+        self.spn_psi_val.valueChanged.connect(lambda v: self.sld_psi.setValue(int(round(v * 100))))
         self.sld_psi.valueChanged.connect(self._on_psi_change)
 
-        # rows 0-3: four phase sliders (visibility set by _on_hstr_change)
-        rl.addWidget(self.lbl_phi_iqh0,  0, 0); rl.addWidget(self.sld_phi_iqh0, 0, 1, 1, 3)
-        rl.addWidget(self.lbl_phi_iqh1,  1, 0); rl.addWidget(self.sld_phi_iqh1, 1, 1, 1, 3)
-        rl.addWidget(self.lbl_phi_aqh0,  2, 0); rl.addWidget(self.sld_phi_aqh0, 2, 1, 1, 3)
-        rl.addWidget(self.lbl_phi_aqh1,  3, 0); rl.addWidget(self.sld_phi_aqh1, 3, 1, 1, 3)
+        # rows 0-3: four phase sliders + spinboxes (visibility set by _on_hstr_change)
+        rl.addWidget(self.lbl_phi_iqh0,  0, 0); rl.addWidget(self.sld_phi_iqh0, 0, 1, 1, 2); rl.addWidget(self.spn_phi_iqh0, 0, 3)
+        rl.addWidget(self.lbl_phi_iqh1,  1, 0); rl.addWidget(self.sld_phi_iqh1, 1, 1, 1, 2); rl.addWidget(self.spn_phi_iqh1, 1, 3)
+        rl.addWidget(self.lbl_phi_aqh0,  2, 0); rl.addWidget(self.sld_phi_aqh0, 2, 1, 1, 2); rl.addWidget(self.spn_phi_aqh0, 2, 3)
+        rl.addWidget(self.lbl_phi_aqh1,  3, 0); rl.addWidget(self.sld_phi_aqh1, 3, 1, 1, 2); rl.addWidget(self.spn_phi_aqh1, 3, 3)
         # row 4: ψ (external flux, cylinder only)
-        rl.addWidget(self.lbl_psi,       4, 0); rl.addWidget(self.sld_psi,      4, 1, 1, 3)
+        rl.addWidget(self.lbl_psi,       4, 0); rl.addWidget(self.sld_psi,      4, 1, 1, 2); rl.addWidget(self.spn_psi_val, 4, 3)
         # row 5: sweep start / end
         rl.addWidget(QLabel('Start'),    5, 0); rl.addWidget(self.spn_ss, 5, 1)
         rl.addWidget(QLabel('End'),      5, 2); rl.addWidget(self.spn_se, 5, 3)
@@ -884,28 +904,23 @@ class MainWindow(QMainWindow):
 
     def _on_phi_iqh0_change(self, val):
         self.state['phi_iqh0'] = val * np.pi / 100.0
-        self.lbl_phi_iqh0.setText(f'φ_IQH_layer_0 = {self._phi_label(val)}')
         self._invalidate()
 
     def _on_phi_iqh1_change(self, val):
         self.state['phi_iqh1'] = val * np.pi / 100.0
-        self.lbl_phi_iqh1.setText(f'φ_IQH_layer_1 = {self._phi_label(val)}')
         self._invalidate()
 
     def _on_phi_aqh0_change(self, val):
         self.state['phi_aqh0'] = val * np.pi / 100.0
-        self.lbl_phi_aqh0.setText(f'φ_AQH_layer_0 = {self._phi_label(val)}')
         self._invalidate()
 
     def _on_phi_aqh1_change(self, val):
         self.state['phi_aqh1'] = val * np.pi / 100.0
-        self.lbl_phi_aqh1.setText(f'φ_AQH_layer_1 = {self._phi_label(val)}')
         self._invalidate()
 
     def _on_psi_change(self, val):
         psi = val * np.pi / 100.0
         self.state['psi'] = psi
-        self.lbl_psi.setText(f'ψ_ext = {self._phi_label(val)}')
         self._invalidate()
 
     def _reset_all(self):
@@ -969,14 +984,14 @@ class MainWindow(QMainWindow):
             'phi_aqh0': h in ('AQH_AQH', 'AQH_IQH', 'A_zigzag', 'AQH_cyl'),
             'phi_aqh1': h in ('AQH_AQH', 'IQH_AQH'),
         }
-        for key, sld, lbl in [
-            ('phi_iqh0', self.sld_phi_iqh0, self.lbl_phi_iqh0),
-            ('phi_iqh1', self.sld_phi_iqh1, self.lbl_phi_iqh1),
-            ('phi_aqh0', self.sld_phi_aqh0, self.lbl_phi_aqh0),
-            ('phi_aqh1', self.sld_phi_aqh1, self.lbl_phi_aqh1),
+        for key, sld, lbl, spn in [
+            ('phi_iqh0', self.sld_phi_iqh0, self.lbl_phi_iqh0, self.spn_phi_iqh0),
+            ('phi_iqh1', self.sld_phi_iqh1, self.lbl_phi_iqh1, self.spn_phi_iqh1),
+            ('phi_aqh0', self.sld_phi_aqh0, self.lbl_phi_aqh0, self.spn_phi_aqh0),
+            ('phi_aqh1', self.sld_phi_aqh1, self.lbl_phi_aqh1, self.spn_phi_aqh1),
         ]:
-            sld.setVisible(show[key]); lbl.setVisible(show[key])
-        self.sld_psi.setVisible(cyl); self.lbl_psi.setVisible(cyl)
+            sld.setVisible(show[key]); lbl.setVisible(show[key]); spn.setVisible(show[key])
+        self.sld_psi.setVisible(cyl); self.lbl_psi.setVisible(cyl); self.spn_psi_val.setVisible(cyl)
         self._invalidate()
 
     def _rebuild_lattice(self):
@@ -1294,8 +1309,10 @@ class MainWindow(QMainWindow):
         widgets = [
             self.cmb_type, self.spn_nx0, self.spn_ny0, self.spn_nx1, self.spn_ny1,
             self.spn_j1, self.sld_kin, self.sld_kex,
+            self.spn_kin_val, self.spn_kex_val,
             self.sld_phi_iqh0, self.sld_phi_iqh1, self.sld_phi_aqh0, self.sld_phi_aqh1,
-            self.sld_psi, self.spn_ss, self.spn_se, self.spn_st,
+            self.spn_phi_iqh0, self.spn_phi_iqh1, self.spn_phi_aqh0, self.spn_phi_aqh1,
+            self.sld_psi, self.spn_psi_val, self.spn_ss, self.spn_se, self.spn_st,
         ]
         for w in widgets: w.blockSignals(True)
 
@@ -1305,11 +1322,18 @@ class MainWindow(QMainWindow):
         self.spn_j1.setValue(s['j1'])
         self.sld_kin.setValue(int(round(s['kin'] * 1000)))
         self.sld_kex.setValue(int(round(s['kex'] * 1000)))
+        self.spn_kin_val.setValue(s['kin'])
+        self.spn_kex_val.setValue(s['kex'])
         self.sld_phi_iqh0.setValue(int(round(s['phi_iqh0'] / (2*np.pi) * PHI_TICKS)))
         self.sld_phi_iqh1.setValue(int(round(s['phi_iqh1'] / (2*np.pi) * PHI_TICKS)))
         self.sld_phi_aqh0.setValue(int(round(s['phi_aqh0'] / (2*np.pi) * PHI_TICKS)))
         self.sld_phi_aqh1.setValue(int(round(s['phi_aqh1'] / (2*np.pi) * PHI_TICKS)))
+        self.spn_phi_iqh0.setValue(s['phi_iqh0'] / np.pi)
+        self.spn_phi_iqh1.setValue(s['phi_iqh1'] / np.pi)
+        self.spn_phi_aqh0.setValue(s['phi_aqh0'] / np.pi)
+        self.spn_phi_aqh1.setValue(s['phi_aqh1'] / np.pi)
         self.sld_psi.setValue(int(round(s.get('psi', 0.0) / (2*np.pi) * 200)))
+        self.spn_psi_val.setValue(s.get('psi', 0.0) / np.pi)
         # sweep spinboxes
         if 'sw_start' in s: self.spn_ss.setValue(s['sw_start'])
         if 'sw_end'   in s: self.spn_se.setValue(s['sw_end'])
@@ -1317,15 +1341,6 @@ class MainWindow(QMainWindow):
 
         for w in widgets: w.blockSignals(False)
 
-        # Update dependent labels manually (signals were blocked)
-        self.lbl_kin.setText(f'κ_in={s["kin"]:.3f}')
-        self.lbl_kex.setText(f'κ_ex={s["kex"]:.3f}')
-        self.lbl_phi_iqh0.setText(f'φ_IQH_layer_0 = {self._phi_label(int(round(s["phi_iqh0"] / (2*np.pi) * PHI_TICKS)))}')
-        self.lbl_phi_iqh1.setText(f'φ_IQH_layer_1 = {self._phi_label(int(round(s["phi_iqh1"] / (2*np.pi) * PHI_TICKS)))}')
-        self.lbl_phi_aqh0.setText(f'φ_AQH_layer_0 = {self._phi_label(int(round(s["phi_aqh0"] / (2*np.pi) * PHI_TICKS)))}')
-        self.lbl_phi_aqh1.setText(f'φ_AQH_layer_1 = {self._phi_label(int(round(s["phi_aqh1"] / (2*np.pi) * PHI_TICKS)))}')
-        psi_ticks = int(round(s.get('psi', 0.0) / (2*np.pi) * 200))
-        self.lbl_psi.setText(f'ψ_ext = {self._phi_label(psi_ticks)}')
         # Update IO label
         self._update_io_label()
         # Trigger visibility update for h_str-dependent sliders
