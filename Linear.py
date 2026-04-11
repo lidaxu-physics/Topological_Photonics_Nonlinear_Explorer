@@ -117,7 +117,8 @@ def get_lattice_params(h_str, nx0, ny0, nx1, ny1):
         Nxt, Nyt = nx0 * nx1, ny0 * ny1
         NL = Nxt * Nyt
         isite = 1
-        osite = nx0 * ny0 - nx0 + 1   # bottom-left of first unit cell
+        # single ring: osite = isite = 1
+        osite = max(1, nx0 * ny0 - nx0 + 1)
     return NL, Nxt, Nyt, isite, osite
 
 def site_xy(n, h_str, nx0, ny0, nx1, ny1):
@@ -737,8 +738,8 @@ class MainWindow(QMainWindow):
         gd  = QGroupBox('Lattice'); gd.setFixedWidth(370)
         dl  = QGridLayout(gd); dl.setSpacing(3)
 
-        self.spn_nx0 = QSpinBox(); self.spn_nx0.setRange(2, 20); self.spn_nx0.setValue(6)
-        self.spn_ny0 = QSpinBox(); self.spn_ny0.setRange(2, 20); self.spn_ny0.setValue(6)
+        self.spn_nx0 = QSpinBox(); self.spn_nx0.setRange(1, 20); self.spn_nx0.setValue(6)
+        self.spn_ny0 = QSpinBox(); self.spn_ny0.setRange(1, 20); self.spn_ny0.setValue(6)
         self.spn_nx1 = QSpinBox(); self.spn_nx1.setRange(1, 10); self.spn_nx1.setValue(1)
         self.spn_ny1 = QSpinBox(); self.spn_ny1.setRange(1, 10); self.spn_ny1.setValue(1)
         self.spn_j1  = QDoubleSpinBox()

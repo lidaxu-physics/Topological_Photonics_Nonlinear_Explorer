@@ -1145,7 +1145,7 @@ class SlowTimeWindow(QMainWindow):
             n = int(k.split('_')[1]); H[n-1, n-1] += v
 
         # Log all parameters for verification
-        h_trace = f'H[0,0]={H[0,0]:.4f}  H[1,0]={H[1,0]:.4f}'
+        h_trace = f'H[0,0]={H[0,0]:.4f}' + (f'  H[1,0]={H[1,0]:.4f}' if H.shape[0] > 1 else '')
         self.status.showMessage(
             f'Running — Δ={p["detuning"]:.5f}  F={p["F"]:.4f}  '
             f'ψ={psi_val/np.pi:.4f}π  kin={p["kin"]:.4f}  kex={p["kex"]:.4f}  '
