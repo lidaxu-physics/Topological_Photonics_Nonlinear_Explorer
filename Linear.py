@@ -550,7 +550,7 @@ def compute_flow(field_1d, H_mat, NL, isite, osite, h_str, nx0, ny0, nx1, ny1):
     U, V = np.array(Ur), np.array(Vr)
     mx   = np.sqrt(U ** 2 + V ** 2).max()
     if mx > 0: U /= mx; V /= mx
-    U = -U; V = -V
+    # Arrow direction inverted (flip removed); centering uses current-sign U,V
     return np.array(Xr) - 0.5 * U, np.array(Yr) - 0.5 * V, U, V, cols
 
 
@@ -761,18 +761,20 @@ class MainWindow(QMainWindow):
         self.sl_widgets = [self.spn_nx1, self.spn_ny1, self.spn_j1]
 
         # row 3-4: κ sliders + spinboxes (moved here from Simulation)
-        self.sld_kin = QSlider(Qt.Horizontal); self.sld_kin.setRange(1,  50); self.sld_kin.setValue(1)
-        self.sld_kex = QSlider(Qt.Horizontal); self.sld_kex.setRange(10, 200); self.sld_kex.setValue(10)
+        # κ_in : min 10× smaller (1e-4), max 0.5 → slider ticks /10000, range 1..5000
+        # κ_ex : min 10× smaller (1e-3), max 1.0 → slider ticks /1000,  range 1..1000
+        self.sld_kin = QSlider(Qt.Horizontal); self.sld_kin.setRange(1,  5000); self.sld_kin.setValue(10)
+        self.sld_kex = QSlider(Qt.Horizontal); self.sld_kex.setRange(1, 1000); self.sld_kex.setValue(10)
         self.lbl_kin = QLabel('κ_in'); self.lbl_kex = QLabel('κ_ex')
-        self.spn_kin_val = QDoubleSpinBox(); self.spn_kin_val.setRange(0.001, 0.050)
-        self.spn_kin_val.setDecimals(3); self.spn_kin_val.setSingleStep(0.001); self.spn_kin_val.setValue(0.001)
-        self.spn_kex_val = QDoubleSpinBox(); self.spn_kex_val.setRange(0.010, 0.200)
+        self.spn_kin_val = QDoubleSpinBox(); self.spn_kin_val.setRange(0.0001, 0.5000)
+        self.spn_kin_val.setDecimals(4); self.spn_kin_val.setSingleStep(0.0001); self.spn_kin_val.setValue(0.001)
+        self.spn_kex_val = QDoubleSpinBox(); self.spn_kex_val.setRange(0.001, 1.000)
         self.spn_kex_val.setDecimals(3); self.spn_kex_val.setSingleStep(0.001); self.spn_kex_val.setValue(0.010)
         # Bidirectional sync: slider → spinbox
-        self.sld_kin.valueChanged.connect(lambda v: self.spn_kin_val.setValue(v / 1000.))
+        self.sld_kin.valueChanged.connect(lambda v: self.spn_kin_val.setValue(v / 10000.))
         self.sld_kex.valueChanged.connect(lambda v: self.spn_kex_val.setValue(v / 1000.))
         # Bidirectional sync: spinbox → slider
-        self.spn_kin_val.valueChanged.connect(lambda v: self.sld_kin.setValue(int(round(v * 1000))))
+        self.spn_kin_val.valueChanged.connect(lambda v: self.sld_kin.setValue(int(round(v * 10000))))
         self.spn_kex_val.valueChanged.connect(lambda v: self.sld_kex.setValue(int(round(v * 1000))))
         self.sld_kin.valueChanged.connect(lambda _: self._invalidate())
         self.sld_kex.valueChanged.connect(lambda _: self._invalidate())
@@ -934,8 +936,8 @@ class MainWindow(QMainWindow):
         self.spn_nx1.setValue(1);  self.spn_ny1.setValue(1)
         self.spn_j1.setValue(0.3)
 
-        # Loss rates  (slider ticks → kin=0.001, kex=0.010)
-        self.sld_kin.setValue(1);  self.sld_kex.setValue(10)
+        # Loss rates  (slider ticks → kin=0.001 [tick 10, /10000], kex=0.010 [tick 10, /1000])
+        self.sld_kin.setValue(10); self.sld_kex.setValue(10)
 
         # Sweep window
         self.spn_ss.setValue(1.455)
@@ -1001,7 +1003,8 @@ class MainWindow(QMainWindow):
         nx1, ny1 = self.spn_nx1.value(), self.spn_ny1.value()
         NL, Nxt, Nyt, id_, od_ = get_lattice_params(h, nx0, ny0, nx1, ny1)
         isite = s['isite'] if 1 <= s['isite'] <= NL else id_
-        osite = s['osite'] if 1 <= s['osite'] <= NL else od_
+        # Always reset osite to Nx0*Ny0 - Nx0 + 1 on rebuild (clamped to valid site range)
+        osite = max(1, min(NL, nx0 * ny0 - nx0 + 1))
         s.update(h_str=h, nx0=nx0, ny0=ny0, nx1=nx1, ny1=ny1,
                  NL=NL, Nxt=Nxt, Nyt=Nyt,
                  isite=isite, osite=osite, is_zz=(h == 'A_zigzag'),
@@ -1245,14 +1248,15 @@ class MainWindow(QMainWindow):
         nx0, ny0 = self.spn_nx0.value(), self.spn_ny0.value()
         nx1, ny1 = self.spn_nx1.value(), self.spn_ny1.value()
         j1       = self.spn_j1.value()
-        kin      = self.sld_kin.value() / 1000.
+        kin      = self.sld_kin.value() / 10000.
         kex      = self.sld_kex.value() / 1000.
         phi_iqh0 = s['phi_iqh0']; phi_iqh1 = s['phi_iqh1']
         phi_aqh0 = s['phi_aqh0']; phi_aqh1 = s['phi_aqh1']
         sw_s     = self.spn_ss.value(); sw_e = self.spn_se.value(); sw_t = self.spn_st.value()
         NL, Nxt, Nyt, id_, od_ = get_lattice_params(h, nx0, ny0, nx1, ny1)
         isite = s['isite'] if 1 <= s['isite'] <= NL else id_
-        osite = s['osite'] if 1 <= s['osite'] <= NL else od_
+        # Always reset osite to Nx0*Ny0 - Nx0 + 1 on compute (clamped to valid site range)
+        osite = max(1, min(NL, nx0 * ny0 - nx0 + 1))
         s.update(h_str=h, nx0=nx0, ny0=ny0, nx1=nx1, ny1=ny1,
                  j1=j1, kin=kin, kex=kex,
                  phi_iqh0=phi_iqh0, phi_iqh1=phi_iqh1,
@@ -1299,6 +1303,11 @@ class MainWindow(QMainWindow):
     def _open_nonlinear(self):
         from NonLinear import NonlinearWindow
         self.state['session_folder'] = getattr(self, '_session_folder', None)
+        # Sync live sweep spinbox values into state so NonLinear can inherit them.
+        # (The spinboxes are only snapshot into state on Compute/Save, not on every edit.)
+        self.state['sw_start'] = self.spn_ss.value()
+        self.state['sw_end']   = self.spn_se.value()
+        self.state['sw_step']  = self.spn_st.value()
         self._nl_win = NonlinearWindow(self.state, parent=self)
         self._nl_win.show()
 
@@ -1321,7 +1330,7 @@ class MainWindow(QMainWindow):
         self.spn_nx0.setValue(s['nx0']); self.spn_ny0.setValue(s['ny0'])
         self.spn_nx1.setValue(s['nx1']); self.spn_ny1.setValue(s['ny1'])
         self.spn_j1.setValue(s['j1'])
-        self.sld_kin.setValue(int(round(s['kin'] * 1000)))
+        self.sld_kin.setValue(int(round(s['kin'] * 10000)))
         self.sld_kex.setValue(int(round(s['kex'] * 1000)))
         self.spn_kin_val.setValue(s['kin'])
         self.spn_kex_val.setValue(s['kex'])
