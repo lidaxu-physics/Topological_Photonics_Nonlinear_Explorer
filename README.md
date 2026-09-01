@@ -5,7 +5,7 @@
 # Topological Photonic Lattice Explorer
 
 **Author:** Lida Xu  
-**License:** Proprietary — see [LICENSE](LICENSE) for terms  
+**License:** MIT — see [LICENSE](LICENSE)  
 **Version:** 1.0
 
 ---
@@ -250,11 +250,12 @@ Output: `dist\TopologicalPhotonicExplorer.exe` — fully self-contained, no Pyth
 | `TopologicalPhotonic.spec` | PyInstaller build recipe |
 | `original.png` | Splash screen background image |
 | `icon.ico` | Application window icon |
-| `LICENSE` | Proprietary licence — see file for terms |
+| `LICENSE` | MIT licence |
 
 ---
 
 ## License
 
-Copyright © 2026 Lida Xu. All rights reserved.  
-This software is proprietary. Access is granted solely for collaboration and review as explicitly authorised by the owner. Copying, redistribution, modification, or use in other projects is strictly prohibited without prior written permission. See [LICENSE](LICENSE) for full terms.
+Released under the **MIT License** — see [`LICENSE`](LICENSE). You may use, modify and
+redistribute this software, including commercially, provided the copyright notice and licence
+text are retained.
